@@ -310,11 +310,9 @@ function goStep(n){
 }
 
 /* ══════════════════════════════════════════════
-   AUTOCOMPLETE VIA JSONP — contourne les restrictions sandbox
-   Geoapify supporte le paramètre ?callback= (JSONP natif)
+   AUTOCOMPLETE VIA FETCH — fonctionne sur GitHub Pages
 ══════════════════════════════════════════════ */
 var acTimers={};
-var jsonpCounter=0;
 
 function setupAC(inpId,acId,spinId,key){
   var inp=document.getElementById(inpId);
@@ -323,105 +321,75 @@ function setupAC(inpId,acId,spinId,key){
 
   inp.addEventListener('input',function(){
     clearTimeout(acTimers[key]);
-    // Annuler le script JSONP précédent
-    if(window['_geo_cb_'+key]){window['_geo_cb_'+key]=function(){};}
     var q=inp.value.trim();
     if(q.length<2){ac.classList.remove('op');ac.innerHTML='';sp.style.display='none';return;}
     sp.style.display='block';
     ac.innerHTML='<div class="ac-msg">🔍 Recherche…</div>';
     ac.classList.add('op');
-    acTimers[key]=setTimeout(function(){doJSONP(q,ac,sp,key,inp);},380);
+    acTimers[key]=setTimeout(function(){doFetch(q,ac,sp,key,inp);},350);
   });
 
   inp.addEventListener('focus',function(){if(ac.childNodes.length)ac.classList.add('op');});
 }
 
-function doJSONP(q,ac,sp,key,inp){
-  // Nom de callback unique
-  var cbName='_geo_cb_'+key;
-  jsonpCounter++;
-
-  // Timeout sécurité 5s
-  var timeout=setTimeout(function(){
-    sp.style.display='none';
-    window[cbName]=function(){};
-    ac.innerHTML='<div class="ac-msg">⏱ Délai dépassé — réessayez</div>';
-  },5000);
-
-  // Callback global appelé par le script JSONP
-  window[cbName]=function(data){
-    clearTimeout(timeout);
-    sp.style.display='none';
-    ac.innerHTML='';
-
-    if(!data||!data.features||!data.features.length){
-      ac.innerHTML='<div class="ac-msg">Aucune adresse trouvée</div>';
-      ac.classList.add('op');
-      return;
-    }
-
-    data.features.forEach(function(f){
-      var p=f.properties;
-      // Construire libellé principal
-      var main='';
-      if(p.housenumber&&p.street) main=p.housenumber+' '+p.street;
-      else if(p.street) main=p.street;
-      else if(p.name) main=p.name;
-      else main=(p.formatted||'').split(',')[0];
-
-      // Libellé secondaire
-      var sub=[];
-      if(p.postcode) sub.push(p.postcode);
-      if(p.city||p.town||p.village) sub.push(p.city||p.town||p.village);
-      var subStr=sub.join(' ');
-
-      var fullLabel=p.formatted||main;
-
-      var div=document.createElement('div');
-      div.className='ac-it';
-      div.innerHTML='<span style="flex-shrink:0;font-size:1rem">📍</span><div><div class="ac-mn">'+esc(main)+'</div>'+(subStr?'<div class="ac-sb">'+esc(subStr)+'</div>':'')+'</div>';
-      div.addEventListener('mousedown',function(e){e.preventDefault();});
-      (function(feat,label){
-        div.onclick=function(){
-          var coords=feat.geometry.coordinates;
-          inp.value=label;
-          inp.classList.add('ok');
-          if(key==='from'){S.from=label;S.fromC=[coords[1],coords[0]];}
-          else{S.to=label;S.toC=[coords[1],coords[0]];}
-          ac.classList.remove('op');
-          ac.innerHTML='';
-          // Nettoyer le callback
-          window[cbName]=function(){};
-        };
-      })(f,fullLabel);
-      ac.appendChild(div);
-    });
-    ac.classList.add('op');
-  };
-
-  // Injection dynamique du script JSONP
-  var old=document.getElementById('jsonp-'+key);
-  if(old) old.parentNode.removeChild(old);
-
+function doFetch(q,ac,sp,key,inp){
   var url='https://api.geoapify.com/v1/geocode/autocomplete'
     +'?text='+encodeURIComponent(q)
     +'&apiKey='+GEO_KEY
     +'&lang=fr'
     +'&limit=7'
     +'&filter=countrycode:fr'
-    +'&bias=proximity:2.3488,48.8534'  // centré sur Paris
-    +'&callback='+cbName;
+    +'&bias=proximity:2.3488,48.8534';
 
-  var script=document.createElement('script');
-  script.id='jsonp-'+key;
-  script.src=url;
-  script.onerror=function(){
-    clearTimeout(timeout);
-    sp.style.display='none';
-    ac.innerHTML='<div class="ac-msg">⚠️ Service indisponible — réessayez</div>';
-    window[cbName]=function(){};
-  };
-  document.head.appendChild(script);
+  fetch(url)
+    .then(function(r){return r.json();})
+    .then(function(data){
+      sp.style.display='none';
+      ac.innerHTML='';
+
+      if(!data||!data.features||!data.features.length){
+        ac.innerHTML='<div class="ac-msg">Aucune adresse trouvée</div>';
+        ac.classList.add('op');
+        return;
+      }
+
+      data.features.forEach(function(f){
+        var p=f.properties;
+        var main='';
+        if(p.housenumber&&p.street) main=p.housenumber+' '+p.street;
+        else if(p.street) main=p.street;
+        else if(p.name) main=p.name;
+        else main=(p.formatted||'').split(',')[0];
+
+        var sub=[];
+        if(p.postcode) sub.push(p.postcode);
+        if(p.city||p.town||p.village) sub.push(p.city||p.town||p.village);
+        var subStr=sub.join(' ');
+        var fullLabel=p.formatted||main;
+
+        var div=document.createElement('div');
+        div.className='ac-it';
+        div.innerHTML='<span style="flex-shrink:0;font-size:1rem">📍</span><div><div class="ac-mn">'+esc(main)+'</div>'+(subStr?'<div class="ac-sb">'+esc(subStr)+'</div>':'')+'</div>';
+        div.addEventListener('mousedown',function(e){e.preventDefault();});
+        (function(feat,label){
+          div.onclick=function(){
+            var coords=feat.geometry.coordinates;
+            inp.value=label;
+            inp.classList.add('ok');
+            if(key==='from'){S.from=label;S.fromC=[coords[1],coords[0]];}
+            else{S.to=label;S.toC=[coords[1],coords[0]];}
+            ac.classList.remove('op');
+            ac.innerHTML='';
+          };
+        })(f,fullLabel);
+        ac.appendChild(div);
+      });
+      ac.classList.add('op');
+    })
+    .catch(function(){
+      sp.style.display='none';
+      ac.innerHTML='<div class="ac-msg">⚠️ Erreur réseau</div>';
+    });
 }
 
 setupAC('i-from','ac-from','sp-from','from');
